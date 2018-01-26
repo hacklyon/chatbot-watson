@@ -1,14 +1,15 @@
 {
   "CLOUDANT_URL": "",
-  "REGISTRATIONS_DB": "",
-  "USERS_DB": "",
-  "REDIS_URL": "",
+  "REGISTRATIONS_DB": "registrations",
+  "USERS_DB": "users",
+  "REDIS_URI": "redis://admin:",
   "SLACK_CLIENT_ID": "",
   "SLACK_CLIENT_SECRET": "",
   "SLACK_VERIFICATION_TOKEN": "",
-  "CONVERSATION_WORKSPACE_ID": "",
+  "WORKSPACE_ID": "",
   "CONVERSATION_USERNAME": "",
   "CONVERSATION_PASSWORD": "",
-  "MIN_CONFIDENCE": 0.5,
-  "PERSISTED_ATTR": "[\"username\"]"
+  "CONVERSATION_API_URL": "https://gateway-fra.watsonplatform.net/conversation/api",
+  "PERSISTED_ATTR": "[\"first_name\",\"last_name\",\"username\",\"is_admin\",\"slack_id\"]",
+  "CF_API_BASE": "https://openwhisk.eu-de.bluemix.net/api/v1/web/"
 }
