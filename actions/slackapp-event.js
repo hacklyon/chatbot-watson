@@ -95,6 +95,7 @@ function processSlackEvent(event, user, args) {
       context.slack_id = event.event.user;
       // Input data
       var payload = {
+        cftoken: args.CF_TOKEN,
         filter: 'by_slack_id',
         value: event.event.user,
         context: context,
@@ -110,7 +111,7 @@ function processSlackEvent(event, user, args) {
         if (err) {
             console.log("Error calling converse");
         } 
-        else if (response.statusCode < 200 || response.statusCode >= 300) {
+        else if (response.statusCode < 200 || response.statusCode >= 300 || !body.cftoken || body.cftoken != args.CF_TOKEN) {
             console.log("CF call failed: ", response.statusCode);
         } 
         else {

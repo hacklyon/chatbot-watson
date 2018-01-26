@@ -35,7 +35,10 @@ var response = {
     },
     statusCode: 500,
     body: {
-        version: "1",
+        version: "1.0",
+        cftoken: "",
+        user_id: "",
+        user_rev: "",
         response: [],
         context: context
     }
@@ -43,6 +46,7 @@ var response = {
 //input
 /**
  * {
+ *  cftoken: args.CF_TOKEN,
  *  // to retrieve context from db
  *  filter: 'by_id',
  *  value: 'id',
@@ -240,6 +244,8 @@ function watsonResponse(watsonsaid) {
     response.statusCode = 200;
     response.body.response = watsonsaid;
     response.body.context = context;
+    response.body.user_id = user_id;
+    response.body.user_rev = user_rev;
     return response;
 }
 
@@ -255,7 +261,10 @@ function interpretWatson(data, args) {
             var options = {
                 url: args.CF_API_BASE+context.action,
                 body: {
-                    context: context
+                    cftoken: args.CF_TOKEN,
+                    context: context,
+                    user_id: user_id,
+                    user_rev: user_rev
                 },
                 headers: {'Content-Type': 'application/json'},
                 json: true
@@ -284,7 +293,8 @@ function interpretWatson(data, args) {
 
 // What to do when action is triggered
 function main(args) {
-    if (args.value && args.context && args.text) {
+    if (args.cftoken && args.cftoken === args.CF_TOKEN && args.value && args.context && args.text) {
+        response.body.cftoken = args.CF_TOKEN;
         if (!args.filter) args.filter = 'by_id';
         console.log("new converse request: ", args.text);
         // Connect to services
@@ -293,18 +303,21 @@ function main(args) {
         const persisted_attr = JSON.parse(args.PERSISTED_ATTR);
         // Process request
         return getContext(args.filter,args.value,persisted_attr,args.context)
-        .then(doc => askWatson(args.text,args))
-        .then(output => interpretWatson(output,args))
-        .then(watsonsaid => watsonResponse(watsonsaid))
-        .then(response => setContext(persisted_attr))
-        .then(() => {
-            console.log("Processed: ", response.body.response);
-            return response;
-        })
-        .catch( err => {
-            console.error('Error: ', err);
-            return response;
-        });
+            .then(doc => askWatson(args.text,args))
+            .then(output => interpretWatson(output,args))
+            .then(watsonsaid => watsonResponse(watsonsaid))
+            .then(response => setContext(persisted_attr))
+            .then(() => {
+                console.log("Processed: ", response.body.response);
+                return response;
+            })
+            .catch( err => {
+                console.error('Error: ', err);
+                return response;
+            });
+    } else if (!args.cftoken || args.cftoken != args.CF_TOKEN) {
+        response.statusCode = 401;
+        return response;
     } else {
         response.statusCode = 400;
         return response;
