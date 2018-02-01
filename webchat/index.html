@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <title>Webchat Chatbot Demo</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="stylesheet" type="text/css" media="screen" href="https://unpkg.com/carbon-components/css/carbon-components.min.css" />
+    <link rel="stylesheet" type="text/css" media="screen" href="index.css" />
+</head>
+<body>
+
+<div id="wrapper">
+    <div id="chatbox">
+    </div>
+    <form id="message" name="message" action="">
+            <div class="bx--form-item">
+                <textarea name="usermsg" id="usermsg" class="bx--text-area" rows="4" cols="50" placeholder="Type your message here"></textarea>
+            </div>
+            <div class="bx--form-item">
+                <button id="submitmsg" class="bx--btn bx--btn--primary" type="button">Send</button>
+            </div>
+            <div id="user_id_container" class="bx--form-item">
+                <input id="user_id" type="text" class="bx--text-input" placeholder="user_id" />
+            </div>
+    </form>
+</div>
+<script type="text/javascript" src="https://code.jquery.com/jquery-1.10.2.js"></script>
+<script type="text/javascript">
+// jQuery Document
+$(document).ready(function(){
+    $("#chatbox").append(`
+        <div class="msg frombot bx--tile">Welcome to web chatbot demonstration!</div>
+    `);
+});
+$("#submitmsg").click(function() {
+    var msg = $("#usermsg").val();
+    $("#chatbox").append(`
+        <div class="msg bx--tile">${msg}</div>
+    `);
+    $("#usermsg").val('');
+    var objDiv = document.getElementById("chatbox");
+    objDiv.scrollTop = objDiv.scrollHeight;
+    return $.post(
+        "https://openwhisk.eu-de.bluemix.net/api/v1/web/valentin.viennot@ibm.com_dev/conversation-demo/converse",
+        {
+            cftoken: "qp^E{t=m&[d8nPH8)Dsyq9{}g",
+            filter: 'by_id',
+            value: $("#user_id").val(),
+            context: {},
+            text: msg
+        },
+        function( data ) {
+            console.log(data);
+            if (data.response) {
+                data.response.forEach(element => {
+                    $("#chatbox").append(`
+                        <div class="msg frombot bx--tile">${element}</div>
+                    `);
+                });
+            }
+            if (data.user_id)
+                $("#user_id").val(data.user_id);
+            objDiv.scrollTop = objDiv.scrollHeight;
+            return false;
+        },'json'
+    );
+});
+</script>
+</body>
+</html>
