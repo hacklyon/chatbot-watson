@@ -15,9 +15,12 @@
  */
 
 // Dependencies
-let request = require('request');
-let Conversation = require('watson-developer-cloud/conversation/v1');
-let redis = require('redis');
+const request = require('request');
+const Conversation = require('watson-developer-cloud/conversation/v1');
+const redis = require('redis');
+
+// TODO DEBUG TODO DEBUG
+const MIN_CONFIDENCE = 0.5;
 
 // Services
 var conversation;
@@ -25,7 +28,7 @@ var redisClient;
 var usersDb;
 
 // Data
-var context = {};
+var context;
 var user_id;
 var user_rev;
 // output
@@ -81,19 +84,39 @@ function initServices(args) {
 }
 
 /**
- * Retrieve context from Redis and Cloudant DB
+ * Retrieve context from Cloudant DB and input
  */
 function getContext(filter, value, persisted_attr, input) {
     return getUserDocument(filter, value)
-        .then(doc => getSessionContext(doc, persisted_attr, input));
+        .then(doc => setGlobalContext(doc, persisted_attr, input));
 }
 
 /**
- * Persist context from Redis and Cloudant DB
+ * Persist context to Cloudant DB
  */
 function setContext(persisted_attr) {
-    return setSessionContext()
-        .then(() => setUserDocument(persisted_attr));
+    return setUserDocument(persisted_attr);
+}
+
+function setGlobalContext(doc, persisted_attr, input) {
+    var ctx = doc.context || {};
+    // Persisted context
+    console.log("properties from cloudant: ");
+    persisted_attr.forEach(attr => {
+        if (ctx[attr]) {
+            context[attr] = ctx[attr];
+            console.log(attr,": ",ctx[attr]);
+        }
+    });
+    // Request context
+    console.log("properties from input: ");
+    for (var attr in input) {
+        if (input.hasOwnProperty(attr)) {
+            context[attr] = input[attr];
+            console.log(attr,": ",input[attr]);
+        }
+    }
+    return doc;
 }
 
 function getUserDocument(filter, value) {
@@ -128,35 +151,22 @@ function getUserDocument(filter, value) {
     });
 }
 
-function getSessionContext(doc, persisted_attr, input) {
-    console.log("Getting context from Redis (", user_id, ")");
+function getSessionContext(name) {
+    console.log("Getting context from Redis (",(user_id+name),")");
     return new Promise(function(resolve, reject) {
         // Cached context
-        redisClient.get(user_id, function(err, value) {
+        redisClient.get((user_id+name), function(err, value) {
             if (err) {
                 console.error(err);
                 reject("Error getting context from Redis.");
             } else {
-                console.log("retrieved context (redis): ",value);
-                console.log("properties from cloudant: ");
-                context = value ? JSON.parse(value) : {};
-                var ctx = doc.context ? doc.context : {};
-                // Persisted context
-                persisted_attr.forEach(attr => {
-                    if (ctx[attr]) {
-                        context[attr] = ctx[attr];
-                        console.log(attr,": ",ctx[attr]);
-                    }
-                });
-                console.log("properties from input: ");
-                // Request context
-                for (var attr in input) {
-                    if (input.hasOwnProperty(attr)) {
-                        context[attr] = input[attr];
-                        console.log(attr,": ",input[attr]);
+                var ctx = value ? JSON.parse(value) : {};
+                for (var attr in context) {
+                    if (context.hasOwnProperty(attr)) {
+                        ctx[attr] = context[attr];
                     }
                 }
-                resolve(doc);
+                resolve(ctx);
             }
         });
     });
@@ -178,17 +188,13 @@ function getSavedContextRows(filter, value) {
     });
 }
 
-function setSessionContext() {
-    console.log("Setting context to Redis (",user_id,")");
-    return new Promise(function(resolve, reject) {
-        if (context) {
-            const newContextString = JSON.stringify(context);
-            // Saved context will expire in 600 secs.
-            redisClient.set(user_id, newContextString, 'EX', 600);
-            console.log('saved context (redis): ', newContextString);
-        }
-        resolve();
-    });
+function setSessionContext(name) {
+    console.log("Setting context to Redis (",user_id+name,")");
+    if (context) {
+        const newContextString = JSON.stringify(context);
+        // Saved context will expire in 600 secs.
+        redisClient.set(user_id+name, newContextString, 'EX', 120);// TODO increase this time when we will be able to clear cache on shouldendsession
+    }
 }
 
 function setUserDocument(persisted_attr) {
@@ -219,25 +225,93 @@ function setUserDocument(persisted_attr) {
 }
 
 function askWatson(input_text, args) {
-    // Input data 
-    var payload = {
-        workspace_id: (context.WORKSPACE_ID || args.WORKSPACE_ID),
-        context: context,
-        input: {
-            'text': input_text
-        }
-    };
-    // Asking Watson
-    return new Promise(function (resolve, reject) {
-        conversation.message(payload, function(err, output) {
-            if (err) {
-                console.log(err);
-                reject("Error asking Watson.");
-            } else {
-                resolve(output);
-            }
-        });
+    return new Promise(function(resolveall, rejectall) {
+        // Prepare for asking multiple workspaces
+        prepareRequests(input_text, args)
+            .then(requests => {
+                return Promise.all(requests);
+            })
+            .then(outputs => {
+                // select confidence for each output
+                outputs.forEach(output => {
+                    // excluse outputs without text
+                    output.confidence = output.output.text.length > 0 ? 
+                        Math.max(
+                            output.intents[0] ? output.intents[0].confidence : 0,
+                            output.entities[0] ? output.entities[0].confidence : 0
+                        ) : -1;
+                    // more chances to stay in same ws than last used
+                    if (context.LAST_WS_USED && output.ws_name && output.ws_name === context.LAST_WS_USED)
+                        output.confidence += 0.1;// TODO better
+                    console.log("confidence ",output.ws_name,": ",output.confidence);
+                });
+                // select more confident output
+                var output = getMoreConfidentOutput(outputs);
+                if (!output)
+                    rejectall("No output from WCS.");
+                else {
+                    // save context
+                    if (output.ws_name)
+                        context.LAST_WS_USED = output.ws_name;// TODO better
+                    if (output.context)
+                        context = output.context;
+                    setSessionContext(output.ws_name);
+                    resolveall(output);
+                }
+            })
+            .catch(err => rejectall(err));
     });
+}
+
+function addRequest(input_text, names, workspaces, requests) {
+    if (names.length<=0) return new Promise(function(resolve,reject) {resolve(requests)});
+    return getSessionContext(names[0])
+        .then((ctx) => {
+            requests.push(new Promise(function(res, rej) {
+                conversation.message(
+                    {
+                        workspace_id: workspaces[names[0]],
+                        context: ctx,
+                        input: {
+                            'text': input_text
+                        }
+                    }, function(err, output) {
+                        if (err) {
+                            console.log(err);
+                            rej("Error asking Watson.");
+                        } else {
+                            console.log("answer from ",names[0]," : ",JSON.stringify(ctx));
+                            output.ws_name = names[0];
+                            res(output);
+                        }
+                    }
+                );
+            }));
+        })
+        .then(() => addRequest(input_text, names.slice(1), workspaces, requests));
+}
+
+function prepareRequests(input_text, args) {
+    const workspaces = JSON.parse(args.WORKSPACES);
+    var names = [];
+    for (var ws in workspaces) {
+        names.push(ws);
+    }
+    return addRequest(input_text,names,workspaces,[]);
+}
+
+function getMoreConfidentOutput(outputs) {
+    var max_c = -1;
+    var max_o = null;
+    var last_o = null;
+    outputs.forEach(output => {
+        last_o = output;
+        if (output.confidence > max_c) {
+            max_c = output.confidence;
+            max_o = output;
+        }
+    });
+    return max_c < MIN_CONFIDENCE ? last_o : max_o;
 }
 
 function watsonResponse(watsonsaid) {
@@ -254,8 +328,9 @@ function interpretWatson(data, args) {
         var watsonsaid = [];
         if (data.output && data.output.text)
             watsonsaid = data.output.text;
-        if (data.context)
-            context = data.context;
+        // Clear Redis cache if session ends
+        if (context.shouldEndSession)
+            redisClient.del(user_id);// TODO
         // Execute OW action if needed
         if (context.action) {
             var options = {
@@ -279,7 +354,7 @@ function interpretWatson(data, args) {
                 } 
                 else {
                     console.log("CF action call sucess: ", context.action);
-                }
+                } 
                 // After execution, delete action instruction to avoid persisting it
                 delete context.action;
                 resolve(watsonsaid);
@@ -293,7 +368,8 @@ function interpretWatson(data, args) {
 
 // What to do when action is triggered
 function main(args) {
-    if (args.cftoken && args.cftoken === args.CF_TOKEN && args.value && args.context && args.text) {
+    if (args.cftoken && args.cftoken === args.CF_TOKEN && args.text) {
+        context = {};
         response.body.cftoken = args.CF_TOKEN;
         if (!args.filter) args.filter = 'by_id';
         console.log("new converse request: ", args.text);
@@ -302,7 +378,7 @@ function main(args) {
         // Get persisted attributes
         const persisted_attr = JSON.parse(args.PERSISTED_ATTR);
         // Process request
-        return getContext(args.filter,args.value,persisted_attr,args.context)
+        return getContext(args.filter,(args.value||""),persisted_attr,(args.context||{}))
             .then(doc => askWatson(args.text,args))
             .then(output => interpretWatson(output,args))
             .then(watsonsaid => watsonResponse(watsonsaid))
