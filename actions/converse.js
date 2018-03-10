@@ -32,20 +32,7 @@ var context;
 var user_id;
 var user_rev;
 // output
-var response = {
-    headers: {
-        'Content-Type': 'application/json'
-    },
-    statusCode: 500,
-    body: {
-        version: "1.0",
-        cftoken: "",
-        user_id: "",
-        user_rev: "",
-        response: [],
-        context: context
-    }
-};
+var response;
 //input
 /**
  * {
@@ -191,9 +178,12 @@ function getSavedContextRows(filter, value) {
 function setSessionContext(name) {
     console.log("Setting context to Redis (",user_id+name,")");
     if (context) {
-        const newContextString = JSON.stringify(context);
+        var ctx = Object.assign({}, context);
+        delete ctx.action;
+        const newContextString = JSON.stringify(ctx);
         // Saved context will expire in 600 secs.
-        redisClient.set(user_id+name, newContextString, 'EX', 120);// TODO increase this time when we will be able to clear cache on shouldendsession
+        redisClient.set(user_id+name, newContextString, 'EX', 120);
+        // clear cache on shouldendsession
     }
 }
 
@@ -203,8 +193,10 @@ function setUserDocument(persisted_attr) {
         // Context to save : which attributes to persist in long term database
         var cts = {};
         persisted_attr.forEach(attr => {
-            if (context[attr])
+            if (context[attr]) {
                 cts[attr] = context[attr];
+                console.log("persist ",attr," value ",context[attr]);
+            }
         });
         // Persist it in database
         usersDb.insert({
@@ -233,8 +225,10 @@ function askWatson(input_text, args) {
             })
             .then(outputs => {
                 // select confidence for each output
+                var last_o = null;
                 outputs.forEach(output => {
-                    // excluse outputs without text
+                    last_o = output;
+                    // exclude outputs without text
                     output.confidence = output.output.text.length > 0 ? 
                         Math.max(
                             output.intents[0] ? output.intents[0].confidence : 0,
@@ -242,9 +236,10 @@ function askWatson(input_text, args) {
                         ) : -1;
                     // more chances to stay in same ws than last used
                     if (context.LAST_WS_USED && output.ws_name && output.ws_name === context.LAST_WS_USED)
-                        output.confidence += 0.1;// TODO better
+                        output.confidence += 0.11;// TODO better
                     console.log("confidence ",output.ws_name,": ",output.confidence);
                 });
+                if (last_o) last_o.confidence -= 0.03;// TODO better
                 // select more confident output
                 var output = getMoreConfidentOutput(outputs);
                 if (!output)
@@ -338,6 +333,8 @@ function interpretWatson(data, args) {
                 body: {
                     cftoken: args.CF_TOKEN,
                     context: context,
+                    intents: data.intents,
+                    entities: data.entities,
                     user_id: user_id,
                     user_rev: user_rev
                 },
@@ -354,7 +351,9 @@ function interpretWatson(data, args) {
                 } 
                 else {
                     console.log("CF action call sucess: ", context.action);
-                } 
+                    // additionnal answers
+                    if (body.response) watsonsaid = watsonsaid.concat(body.response);
+                }
                 // After execution, delete action instruction to avoid persisting it
                 delete context.action;
                 resolve(watsonsaid);
@@ -368,6 +367,21 @@ function interpretWatson(data, args) {
 
 // What to do when action is triggered
 function main(args) {
+    context = {};
+    response = {
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        statusCode: 500,
+        body: {
+            version: "1.0",
+            cftoken: "",
+            user_id: "",
+            user_rev: "",
+            response: [],
+            context: context
+        }
+    };
     if (args.cftoken && args.cftoken === args.CF_TOKEN && args.text) {
         context = {};
         response.body.cftoken = args.CF_TOKEN;
