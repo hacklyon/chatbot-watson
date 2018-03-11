@@ -19,18 +19,18 @@ const request = require('request');
 const Conversation = require('watson-developer-cloud/conversation/v1');
 const redis = require('redis');
 
-// TODO DEBUG TODO DEBUG
-const MIN_CONFIDENCE = 0.5;
-
 // Services
-var conversation;
 var redisClient;
 var usersDb;
+var conversations;
+var workspaces;
 
 // Data
 var context;
 var user_id;
 var user_rev;
+var user_convs;
+var user_lastconv;
 // output
 var response;
 //input
@@ -51,13 +51,25 @@ var response;
  * @param args request arguments
  */
 function initServices(args) {
-    conversation = new Conversation({
-        'username': args.CONVERSATION_USERNAME,
-        'password': args.CONVERSATION_PASSWORD,
-        'version_date': '2017-05-26',
-        'url' : args.CONVERSATION_API_URL
+    workspaces = JSON.parse(args.WORKSPACES);
+    workspaces.forEach(ws => {
+        if (ws.type === "WCS") {
+            if (ws.keychain) {
+                if (!conversations[ws.keychain]) {
+                    var credentials = JSON.parse(args[ws.keychain]);
+                    conversations[ws.keychain] = new Conversation({
+                        'username': credentials.username,
+                        'password': credentials.password,
+                        'version_date': '2017-05-26',
+                        'url' : credentials.api||"https://gateway.watsonplatform.net/conversation/api"
+                    });
+                    console.log("Watson Conversation connected (keychain: ",ws.keychain,").");
+                }
+            } else {
+                console.log("WCS needs a keychain attribute! aborted.");
+            }
+        }
     });
-    console.log("Watson Conversation connected.");
 
     redisClient = redis.createClient(args.REDIS_URI);
     console.log("Redis Connected.");
@@ -86,6 +98,8 @@ function setContext(persisted_attr) {
 }
 
 function setGlobalContext(doc, persisted_attr, input) {
+    user_convs = doc.conversations || [];
+    user_lastconv = doc.LAST_CONV || null;
     var ctx = doc.context || {};
     // Persisted context
     console.log("properties from cloudant: ");
@@ -107,6 +121,7 @@ function setGlobalContext(doc, persisted_attr, input) {
 }
 
 function getUserDocument(filter, value) {
+    // TODO limit nb request call
     console.log("Getting user document from Cloudant (",filter,",",value,")");
     return new Promise(function(resolve,reject) {
         getSavedContextRows(filter, value)
@@ -120,7 +135,8 @@ function getUserDocument(filter, value) {
                     console.log("Creating user in Cloudant db...");
                     usersDb.insert({
                         type: 'user-context',
-                        context: {}
+                        context: {},
+                        conversations: []
                     }, function (err, doc) {
                         if (doc) {
                             console.log("created doc_id: ", doc.id);
@@ -138,22 +154,36 @@ function getUserDocument(filter, value) {
     });
 }
 
-function getSessionContext(name) {
-    console.log("Getting context from Redis (",(user_id+name),")");
+function getSession(names) {
+    console.log("Getting context from Redis (",names[0],")");
     return new Promise(function(resolve, reject) {
         // Cached context
-        redisClient.get((user_id+name), function(err, value) {
+        redisClient.get(names[0], function(err, value) {
             if (err) {
                 console.error(err);
                 reject("Error getting context from Redis.");
             } else {
-                var ctx = value ? JSON.parse(value) : {};
-                for (var attr in context) {
-                    if (context.hasOwnProperty(attr)) {
-                        ctx[attr] = context[attr];
+                // detects inactive conversation
+                if (!value && !names[1]) {
+                    user_convs.splice(user_convs.indexOf(names[0]),1);
+                    reject("Delete inactive conversation...");
+                } else {
+                    var ws = {};
+                    if (names[1]) {
+                        ws = names[1];
+                        var temp = value ? JSON.parse(value) : {};
+                        ws.context = temp.context || {};
+                    } else {
+                        ws = JSON.parse(value);
+                        if (!ws.context) ws.context = {};
                     }
+                    for (var attr in context) {
+                        if (context.hasOwnProperty(attr)) {
+                            ws.context[attr] = context[attr];
+                        }
+                    }
+                    resolve(ws);
                 }
-                resolve(ctx);
             }
         });
     });
@@ -175,15 +205,17 @@ function getSavedContextRows(filter, value) {
     });
 }
 
-function setSessionContext(name) {
-    console.log("Setting context to Redis (",user_id+name,")");
+function setSession(origin_id,ws) {
+    console.log("Setting context to Redis (",origin_id,")");
+    console.log("DEBUG : ", JSON.stringify(ws));
     if (context) {
-        var ctx = Object.assign({}, context);
-        delete ctx.action;
-        const newContextString = JSON.stringify(ctx);
-        // Saved context will expire in 600 secs.
-        redisClient.set(user_id+name, newContextString, 'EX', 120);
-        // clear cache on shouldendsession
+        ws.recursive = false;
+        ws.context = {};
+        Object.assign(ws.context, context);
+        delete ws.context.action;
+        const newString = JSON.stringify(ws);
+        redisClient.set(origin_id, newString, 'EX', 120);
+        // TODO clear cache on shouldEndSession ? 
     }
 }
 
@@ -203,7 +235,9 @@ function setUserDocument(persisted_attr) {
             _id: user_id,
             _rev: user_rev,
             type: 'user-context',
-            context: cts
+            context: cts,
+            conversations: user_convs,
+            LAST_CONV: user_lastconv
         }, function (err, user) {
             if (user) {
                 console.log("Context persisted into Cloudant DB.");
@@ -235,9 +269,9 @@ function askWatson(input_text, args) {
                             output.entities[0] ? output.entities[0].confidence : 0
                         ) : -1;
                     // more chances to stay in same ws than last used
-                    if (context.LAST_WS_USED && output.ws_name && output.ws_name === context.LAST_WS_USED)
+                    if (user_lastconv && output.ws_origin_id && output.ws_origin_id === user_lastconv)
                         output.confidence += 0.11;// TODO better
-                    console.log("confidence ",output.ws_name,": ",output.confidence);
+                    console.log("confidence ",output.ws_origin_id,": ",output.confidence);
                 });
                 if (last_o) last_o.confidence -= 0.03;// TODO better
                 // select more confident output
@@ -246,11 +280,11 @@ function askWatson(input_text, args) {
                     rejectall("No output from WCS.");
                 else {
                     // save context
-                    if (output.ws_name)
-                        context.LAST_WS_USED = output.ws_name;// TODO better
+                    if (output.ws_origin_id)
+                        user_lastconv = output.ws_origin_id;
                     if (output.context)
                         context = output.context;
-                    setSessionContext(output.ws_name);
+                    setSession(output.ws_origin_id,output.ws_origin);
                     resolveall(output);
                 }
             })
@@ -258,15 +292,16 @@ function askWatson(input_text, args) {
     });
 }
 
-function addRequest(input_text, names, workspaces, requests) {
+function addRequest(input_text, names, requests) {
     if (names.length<=0) return new Promise(function(resolve,reject) {resolve(requests)});
-    return getSessionContext(names[0])
-        .then((ctx) => {
+    return getSession(names[0])
+        .then((ws) => {
+            console.log("DEBUG ws : ",JSON.stringify(ws));
             requests.push(new Promise(function(res, rej) {
-                conversation.message(
+                conversations[ws.keychain].message(
                     {
-                        workspace_id: workspaces[names[0]],
-                        context: ctx,
+                        workspace_id: ws.id,
+                        context: ws.context,
                         input: {
                             'text': input_text
                         }
@@ -275,24 +310,44 @@ function addRequest(input_text, names, workspaces, requests) {
                             console.log(err);
                             rej("Error asking Watson.");
                         } else {
-                            console.log("answer from ",names[0]," : ",JSON.stringify(ctx));
-                            output.ws_name = names[0];
+                            console.log("answer from ",ws.name," : ",JSON.stringify(output));
+                            delete ws.context;
+                            if (ws.recursive && output.context && output.context.conversation_id) {
+                                output.ws_origin_id = output.context.conversation_id;
+                                user_convs.push(output.context.conversation_id);
+                            } else {
+                                output.ws_origin_id = names[0][0];
+                            }
+                            output.ws_origin = ws;
                             res(output);
                         }
                     }
                 );
             }));
         })
-        .then(() => addRequest(input_text, names.slice(1), workspaces, requests));
+        .then(() => addRequest(input_text, names.slice(1), requests));
 }
 
 function prepareRequests(input_text, args) {
-    const workspaces = JSON.parse(args.WORKSPACES);
     var names = [];
-    for (var ws in workspaces) {
-        names.push(ws);
+    // if we have to stay on the same conversation, dont ask others
+    if (context.KEEP_CONV && user_lastconv) {
+        names.push([user_lastconv,null]);
+        // do not loop
+        context.KEEP_CONV = false;
+    } else {
+        // default workspaces
+        workspaces.forEach(ws => {
+            if (ws.type === "WCS") {
+                names.push([user_id+ws.name,ws]);
+            }
+        });
+        // active conversations
+        user_convs.forEach(conv => {
+            names.push([conv,null]);
+        });
     }
-    return addRequest(input_text,names,workspaces,[]);
+    return addRequest(input_text,names,[]);
 }
 
 function getMoreConfidentOutput(outputs) {
@@ -306,7 +361,7 @@ function getMoreConfidentOutput(outputs) {
             max_o = output;
         }
     });
-    return max_c < MIN_CONFIDENCE ? last_o : max_o;
+    return max_c < 0 ? last_o : max_o;
 }
 
 function watsonResponse(watsonsaid) {
@@ -368,6 +423,10 @@ function interpretWatson(data, args) {
 // What to do when action is triggered
 function main(args) {
     context = {};
+    conversations = {};
+    workspaces = [];
+    user_convs = [];
+    user_lastconv = null;
     response = {
         headers: {
             'Content-Type': 'application/json'
@@ -382,7 +441,7 @@ function main(args) {
             context: context
         }
     };
-    if (args.cftoken && args.cftoken === args.CF_TOKEN && args.text) {
+    if (args.cftoken && args.cftoken === args.CF_TOKEN && args.text && args.WORKSPACES) {
         context = {};
         response.body.cftoken = args.CF_TOKEN;
         if (!args.filter) args.filter = 'by_id';
