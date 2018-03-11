@@ -30,7 +30,7 @@ function install() {
     --web true --annotation final true
 
   echo "Adding skype action"
-  bx wsk action create $PACKAGE_NAME/converse actions/converse.js\
+  bx wsk action create $PACKAGE_NAME/skype actions/skype.js\
     --web true --annotation final true
 
   echo "Adding Slack registration command"
