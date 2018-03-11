@@ -1,16 +1,16 @@
 {
-  "CLOUDANT_URL": "",
+  "CLOUDANT_URL": "https://-bluemix.cloudant.com",
   "REGISTRATIONS_DB": "registrations",
   "USERS_DB": "users",
   "REDIS_URI": "redis://admin:",
+  "WORKSPACES": "[{\"name\":\"default\",\"type\":\"WCS\",\"id\":\"ws_id\",\"keychain\":\"CONVERSATION\",\"recursive\":true}]",
+  "CONVERSATION": "{\"username\":\"USERNAME\",\"password\":\"PASSWORD\",\"api\":\"https://gateway.watsonplatform.net/conversation/api\"}",
+  "PERSISTED_ATTR": "[\"username\",\"email\",\"KEEP_CONV\"]",
+  "CF_API_BASE": "https://openwhisk.ng.bluemix.net/api/v1/web/ORGSPACE_dev/democonverse/",
+  "CF_TOKEN": "generate_yours",
   "SLACK_CLIENT_ID": "",
   "SLACK_CLIENT_SECRET": "",
   "SLACK_VERIFICATION_TOKEN": "",
-  "WORKSPACE_ID": "",
-  "CONVERSATION_USERNAME": "",
-  "CONVERSATION_PASSWORD": "",
-  "CONVERSATION_API_URL": "https://gateway-fra.watsonplatform.net/conversation/api",
-  "PERSISTED_ATTR": "[\"first_name\",\"last_name\",\"username\",\"is_admin\",\"slack_id\"]",
-  "CF_API_BASE": "https://openwhisk.eu-de.bluemix.net/api/v1/web/",
-  "CF_TOKEN": "generate_yours"
+  "MSAPPID": "SKYPEID",
+  "MSSECRET": "SKYPESECRET"
 }
