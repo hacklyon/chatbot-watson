@@ -14,7 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-PACKAGE_NAME=democonverse
+PACKAGE_NAME=slackapp
 
 function usage() {
   echo "Usage: $0 [--install,--uninstall,--update,--env]"

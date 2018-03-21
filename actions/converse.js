@@ -130,7 +130,12 @@ function getUserDocument(filter, value) {
                     console.log("retrieved doc_id: ", rows[0].doc._id);
                     user_id = rows[0].doc._id;
                     user_rev = rows[0].doc._rev;
-                    resolve(rows[0].doc);
+                    if (rows[0].doc.context.nbcalls && rows[0].doc.context.nbcalls > 150) {
+                    	response.statusCode = 200;
+                    	response.body.response = ["Malheureusement j'ai une limite de requêtes par mois, je ne peux donc plus répondre à tes questions... Tu peux toujours nous contacter par email : hello@hacklyon.com . Merci de ta compréhension !"];
+                    	reject("Trop d'appels");
+                    }
+                    else resolve(rows[0].doc);
                 } else {
                     console.log("Creating user in Cloudant db...");
                     usersDb.insert({
@@ -223,6 +228,8 @@ function setUserDocument(persisted_attr) {
     console.log("Saving new context to Cloudant (",user_id,")");
     return new Promise(function(resolve,reject) {
         // Context to save : which attributes to persist in long term database
+        if (context.nbcalls) context.nbcalls++;
+        else context.nbcalls = 1;
         var cts = {};
         persisted_attr.forEach(attr => {
             if (context[attr]) {
