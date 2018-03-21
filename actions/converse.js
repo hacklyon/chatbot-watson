@@ -130,6 +130,7 @@ function getUserDocument(filter, value) {
                     console.log("retrieved doc_id: ", rows[0].doc._id);
                     user_id = rows[0].doc._id;
                     user_rev = rows[0].doc._rev;
+                    // TODO apologize for doing that this way... bad programmer 
                     if (rows[0].doc.context.nbcalls && rows[0].doc.context.nbcalls > 150) {
                     	response.statusCode = 200;
                     	response.body.response = ["Malheureusement j'ai une limite de requêtes par mois, je ne peux donc plus répondre à tes questions... Tu peux toujours nous contacter par email : hello@hacklyon.com . Merci de ta compréhension !"];
@@ -448,7 +449,8 @@ function main(args) {
             context: context
         }
     };
-    if (args.cftoken && args.cftoken === args.CF_TOKEN && args.text && args.WORKSPACES) {
+    // TODO remove this horrible static check :(
+    if (args.cftoken && (args.cftoken === args.CF_TOKEN || args.cftoken === "hacklyon_alpha") && args.text && args.WORKSPACES) {
         context = {};
         response.body.cftoken = args.CF_TOKEN;
         if (!args.filter) args.filter = 'by_id';
