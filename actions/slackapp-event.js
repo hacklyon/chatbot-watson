@@ -155,7 +155,7 @@ function postMessage(accessToken, channel, text, callback) {
 
 function postResponseArray(response, event) {
   return new Promise(function(resolve, reject) {
-    response.reverse();
+    //response.reverse();
     response.forEach(text => {
       if (event.event.type === 'app_mention' && event.event.user)
         text = '<@'+event.event.user+'> '+text;
