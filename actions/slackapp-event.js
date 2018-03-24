@@ -16,7 +16,7 @@
 var request = require('request');
 var botsDb;
 
-var context = {};
+var context;
 var registration;
 
 function initServices(args) {
@@ -159,12 +159,14 @@ function postResponseArray(response, event) {
     response.forEach(text => {
       if (event.event.type === 'app_mention' && event.event.user)
         text = '<@'+event.event.user+'> '+text;
-      if (text != '')
+      if (text != '') {
+        console.log("OUTPUT: ",text);
         postMessage(registration.bot.bot_access_token, event.event.channel,text)
           .catch(err => {
             console.log('Error postSlackMessage: ', err);
-            reject("Did not end postResponseArray");
+            //reject("Did not end postResponseArray");
           });
+      }
     });
     resolve();
   });
@@ -172,6 +174,9 @@ function postResponseArray(response, event) {
 
 function main(args) {
   console.log('Processing new bot event from Slack : ', args.event.type);
+
+  context = {};
+  context.from = "slack";
 
   // avoid calls from unknown
   if (args.token !== args.SLACK_VERIFICATION_TOKEN) {
@@ -213,6 +218,10 @@ function main(args) {
     team_id: args.team_id,
     event: args.event
   };
+
+  context.channel = event.event.channel;
+
+  console.log("INPUT: ",event.event.text);
 
   return getBotInfos(event)
     .then(registration => getSlackUser(registration.bot.bot_access_token, event.event.user))

@@ -213,7 +213,6 @@ function getSavedContextRows(filter, value) {
 
 function setSession(origin_id,ws) {
     console.log("Setting context to Redis (",origin_id,")");
-    console.log("DEBUG : ", JSON.stringify(ws));
     if (context) {
         ws.recursive = false;
         ws.context = {};
@@ -304,7 +303,6 @@ function addRequest(input_text, names, requests) {
     if (names.length<=0) return new Promise(function(resolve,reject) {resolve(requests)});
     return getSession(names[0])
         .then((ws) => {
-            console.log("DEBUG ws : ",JSON.stringify(ws));
             requests.push(new Promise(function(res, rej) {
                 conversations[ws.keychain].message(
                     {
